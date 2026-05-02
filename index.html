@@ -346,118 +346,148 @@
 <script>
 (async function () {
 	const GITHUB_USER = 'KaueSiqueira54';
+	const CACHE_KEY   = 'gh_langs_v1';
+	const CACHE_TTL   = 6 * 60 * 60 * 1000; // 6 horas em ms
  
-	// Linguagens a ignorar (markup, config, etc. — não representam habilidade de programação)
-	const IGNORE_LANGS = new Set(['Markdown', 'YAML', 'JSON', 'TOML', 'Shell', 'Batchfile', 'Makefile', 'Dockerfile', 'Text']);
+	const IGNORE_LANGS = new Set([
+		'Markdown', 'YAML', 'JSON', 'TOML', 'Shell', 'Batchfile',
+		'Makefile', 'Dockerfile', 'Text', 'EJS', 'Handlebars', 'Liquid'
+	]);
  
-	// Nomes de exibição mais amigáveis
 	const DISPLAY_NAMES = {
 		'HTML': 'HTML', 'CSS': 'CSS', 'JavaScript': 'JavaScript',
 		'TypeScript': 'TypeScript', 'Java': 'Java', 'Python': 'Python',
-		'SCSS': 'SASS/SCSS', 'Jupyter Notebook': 'Jupyter / Python'
+		'SCSS': 'SASS/SCSS', 'Jupyter Notebook': 'Jupyter/Python'
 	};
  
-	// Cores para cada linguagem
 	const LANG_COLORS = {
-		'HTML': '#e34c26', 'CSS': '#264de4', 'JavaScript': '#f7df1e',
+		'HTML': '#e34c26', 'CSS': '#264de4', 'JavaScript': '#e8c84a',
 		'TypeScript': '#3178c6', 'Java': '#b07219', 'Python': '#3572A5',
 		'SCSS': '#c6538c', 'Jupyter Notebook': '#DA5B0B'
 	};
  
 	const barsContainer = document.getElementById('github-lang-bars');
-	const subtitle = document.getElementById('github-skills-subtitle');
+	const subtitle      = document.getElementById('github-skills-subtitle');
  
-	try {
-		// 1. Buscar todos os repositórios públicos (até 100)
-		const reposRes = await fetch(
-			`https://api.github.com/users/${GITHUB_USER}/repos?per_page=100&sort=updated`
-		);
+	// ─── Cache no localStorage para evitar chamadas repetidas ───
+	function readCache() {
+		try {
+			const raw = localStorage.getItem(CACHE_KEY);
+			if (!raw) return null;
+			const { ts, data } = JSON.parse(raw);
+			if (Date.now() - ts < CACHE_TTL) return data;
+		} catch (_) {}
+		return null;
+	}
+	function writeCache(data) {
+		try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); }
+		catch (_) {}
+	}
  
-		if (!reposRes.ok) throw new Error(`GitHub API: ${reposRes.status}`);
-		const repos = await reposRes.json();
- 
-		// 2. Para cada repo, buscar linguagens (bytes por linguagem)
-		//    Limitamos a 40 repos mais recentes para não estourar o rate limit (60 req/hora)
-		const recentRepos = repos.slice(0, 40);
-		const langTotals = {};
- 
-		const langPromises = recentRepos.map(repo =>
-			fetch(repo.languages_url)
-				.then(r => r.ok ? r.json() : {})
-				.then(langs => {
-					for (const [lang, bytes] of Object.entries(langs)) {
-						if (IGNORE_LANGS.has(lang)) continue;
-						langTotals[lang] = (langTotals[lang] || 0) + bytes;
-					}
-				})
-				.catch(() => {}) // ignora erros individuais
-		);
- 
-		await Promise.all(langPromises);
- 
-		// 3. Ordenar por bytes e pegar o top 7
-		const sorted = Object.entries(langTotals)
+	// ─── Renderiza as barras ───
+	function renderBars(langCounts, totalRepos, fromCache) {
+		const sorted = Object.entries(langCounts)
 			.sort((a, b) => b[1] - a[1])
 			.slice(0, 7);
  
-		if (sorted.length === 0) throw new Error('Nenhuma linguagem encontrada');
+		if (sorted.length === 0) throw new Error('sem dados');
  
-		const maxBytes = sorted[0][1];
- 
-		// 4. Renderizar as barras
+		const maxCount = sorted[0][1];
 		barsContainer.innerHTML = '';
-		for (const [lang, bytes] of sorted) {
-			// Calcula % relativa ao maior (máximo = 95% para não encher a barra por completo)
-			const pct = Math.round((bytes / maxBytes) * 92);
+ 
+		for (const [lang, count] of sorted) {
+			const pct = Math.round((count / maxCount) * 92);
 			const displayName = DISPLAY_NAMES[lang] || lang;
 			const color = LANG_COLORS[lang] || '#6c757d';
-			const kb = (bytes / 1024).toFixed(1);
+			const label = count === 1 ? '1 repo' : `${count} repos`;
  
 			const li = document.createElement('li');
 			li.className = 'mb-2';
 			li.innerHTML = `
 				<div class="resume-skill-name d-flex justify-content-between">
 					<span>${displayName}</span>
-					<small style="color:#aaa; font-size:0.72rem;">${kb} KB</small>
+					<small style="color:#aaa;font-size:0.72rem;">${label}</small>
 				</div>
-				<div class="progress resume-progress" title="${kb} KB de código">
+				<div class="progress resume-progress" title="${label} com ${displayName}">
 					<div class="progress-bar theme-progress-bar-dark" role="progressbar"
-						style="width: ${pct}%; background-color: ${color} !important; transition: width 1s ease;"
+						style="width:${pct}%;background-color:${color}!important;transition:width 1s ease;"
 						aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
 					</div>
 				</div>`;
 			barsContainer.appendChild(li);
 		}
  
-		// Atualiza o subtítulo com data e total de repos analisados
-		subtitle.innerHTML = `
-			📊 Baseado em <strong>${recentRepos.length} repositórios</strong> do seu GitHub
+		const cacheNote = fromCache
+			? '<small style="color:#bbb;">(cache · atualiza em 6h)</small>'
+			: '<small style="color:#bbb;">atualizado agora</small>';
+ 
+		subtitle.innerHTML = `📊 Linguagem principal em <strong>${totalRepos} repos</strong>
 			· <a href="https://github.com/${GITHUB_USER}" target="_blank" style="color:inherit;">@${GITHUB_USER}</a>
-			· <small style="color:#bbb;">atualizado ao abrir a página</small>`;
+			· ${cacheNote}`;
+	}
  
-	} catch (err) {
-		console.warn('GitHub skills error:', err);
-		subtitle.textContent = '⚠️ Não foi possível carregar dados do GitHub. Exibindo valores padrão.';
- 
-		// Fallback: valores manuais caso a API falhe (ex: rate limit)
+	// ─── Fallback manual ───
+	function renderFallback(reason) {
+		console.warn('GitHub skills —', reason);
+		subtitle.textContent = '⚠️ GitHub indisponível. Exibindo valores estimados.';
 		const fallback = [
-			{ name: 'HTML/CSS', pct: 85 },
-			{ name: 'JavaScript', pct: 55 },
-			{ name: 'Java', pct: 30 },
-			{ name: 'Python', pct: 35 },
+			{ name: 'HTML',       pct: 88, color: '#e34c26' },
+			{ name: 'CSS',        pct: 80, color: '#264de4' },
+			{ name: 'JavaScript', pct: 58, color: '#e8c84a' },
+			{ name: 'Java',       pct: 32, color: '#b07219' },
+			{ name: 'Python',     pct: 28, color: '#3572A5' },
 		];
 		barsContainer.innerHTML = fallback.map(s => `
 			<li class="mb-2">
 				<div class="resume-skill-name">${s.name}</div>
 				<div class="progress resume-progress">
 					<div class="progress-bar theme-progress-bar-dark" role="progressbar"
-						style="width: ${s.pct}%" aria-valuenow="${s.pct}" aria-valuemin="0" aria-valuemax="100">
+						style="width:${s.pct}%;background-color:${s.color}!important;"
+						aria-valuenow="${s.pct}" aria-valuemin="0" aria-valuemax="100">
 					</div>
 				</div>
 			</li>`).join('');
+	}
+ 
+	// ─── Fluxo principal ───
+	try {
+		// 1. Verifica cache primeiro — evita nova chamada à API
+		const cached = readCache();
+		if (cached) {
+			renderBars(cached.langCounts, cached.totalRepos, true);
+			return;
+		}
+ 
+		// 2. UMA única chamada — usa o campo "language" (linguagem principal)
+		//    que já vem na listagem de repos. Consome apenas 1 dos 60 requests/hora.
+		const res = await fetch(
+			`https://api.github.com/users/${GITHUB_USER}/repos?per_page=100&sort=updated`,
+			{ headers: { 'Accept': 'application/vnd.github+json' } }
+		);
+ 
+		if (res.status === 403 || res.status === 429) throw new Error(`rate-limit (${res.status})`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+ 
+		const repos = await res.json();
+ 
+		// 3. Conta repos por linguagem principal
+		const langCounts = {};
+		for (const repo of repos) {
+			const lang = repo.language;
+			if (!lang || IGNORE_LANGS.has(lang)) continue;
+			langCounts[lang] = (langCounts[lang] || 0) + 1;
+		}
+ 
+		// 4. Salva no cache (6h) e renderiza
+		writeCache({ langCounts, totalRepos: repos.length });
+		renderBars(langCounts, repos.length, false);
+ 
+	} catch (err) {
+		renderFallback(err.message);
 	}
 })();
 </script>
  
 </body>
 </html>
+ 
